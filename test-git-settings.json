@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "youtube-git-server": {
+      "command": "npx",
+      "args": ["-y", "git+https://github.com/acehoss/youtube-mcp-server"],
+      "env": {},
+      "enabled": true
+    },
+    "regular-server": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+      "enabled": true
+    }
+  },
+  "users": [
+    {
+      "username": "admin",
+      "password": "$2b$10$Vt7krIvjNgyN67LXqly0uOcTpN0LI55cYRbcKC71pUDAP0nJ7RPa.",
+      "isAdmin": true
+    }
+  ]
+}

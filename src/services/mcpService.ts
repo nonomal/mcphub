@@ -149,6 +149,26 @@ export const cleanupAllServers = (): void => {
   });
 };
 
+// Helper function to detect if this is a git-based installation
+const isGitBasedInstallation = (command: string, args: string[]): boolean => {
+  if (command === 'npx' || command === 'npm' || command === 'yarn' || command === 'pnpm') {
+    return args.some(arg => arg.startsWith('git+') || arg.includes('github.com') || arg.includes('gitlab.com'));
+  }
+  return false;
+};
+
+// Helper function to validate git availability for git-based installations
+const validateGitAvailability = async (name: string): Promise<void> => {
+  try {
+    const { execSync } = await import('child_process');
+    execSync('git --version', { timeout: 5000, stdio: 'pipe' });
+    console.log(`[${name}] Git is available for installation`);
+  } catch (error) {
+    console.warn(`[${name}] Git is not available or accessible: ${error}`);
+    throw new Error(`Git is required for git-based installations but is not available. Please ensure git is installed and accessible.`);
+  }
+};
+
 // Helper function to create transport based on server configuration
 const createTransportFromConfig = (name: string, conf: ServerConfig): any => {
   let transport;
@@ -201,15 +221,36 @@ const createTransportFromConfig = (name: string, conf: ServerConfig): any => {
       env['npm_config_registry'] = settings.systemConfig.install.npmRegistry;
     }
 
+    // Check if this is a git-based installation
+    const isGitBased = isGitBasedInstallation(conf.command, conf.args);
+    if (isGitBased) {
+      console.log(`[${name}] Detected git-based installation, will use extended timeout and validation`);
+      // Note: Git validation will be done during connection attempt to avoid blocking transport creation
+    }
+
     transport = new StdioClientTransport({
       command: conf.command,
       args: replaceEnvVars(conf.args) as string[],
       env: env,
       stderr: 'pipe',
     });
+    
+    // Enhanced stderr logging for better debugging
+    const stderrLogs: string[] = [];
     transport.stderr?.on('data', (data) => {
-      console.log(`[${name}] [child] ${data}`);
+      const message = data.toString().trim();
+      stderrLogs.push(message);
+      console.log(`[${name}] [stderr] ${message}`);
+      
+      // Log important error patterns for git-based installations
+      if (isGitBased && (message.includes('fatal:') || message.includes('error:') || message.includes('failed'))) {
+        console.warn(`[${name}] [git-error] ${message}`);
+      }
     });
+
+    // Store stderr logs for later error reporting
+    (transport as any)._stderrLogs = stderrLogs;
+    (transport as any)._isGitBased = isGitBased;
   } else {
     throw new Error(`Unable to create transport for server: ${name}`);
   }
@@ -459,14 +500,25 @@ export const initializeClientsFromSettings = async (
 
     const initRequestOptions = isInit
       ? {
-          timeout: Number(config.initTimeout) || 60000,
+          timeout: Number(config.initTimeout) || 300000, // Use full initTimeout value, default to 5 minutes
         }
       : undefined;
 
     // Get request options from server configuration, with fallbacks
     const serverRequestOptions = conf.options || {};
+    
+    // Check if this is a git-based installation to apply extended timeouts
+    const isGitBased = conf.command && conf.args && isGitBasedInstallation(conf.command, conf.args);
+    
+    // For git-based installations, use extended timeouts
+    let defaultTimeout = 60000; // Default 60 seconds
+    if (isGitBased) {
+      defaultTimeout = 300000; // 5 minutes for git-based installations
+      console.log(`[${name}] Using extended timeout (${defaultTimeout}ms) for git-based installation`);
+    }
+    
     const requestOptions = {
-      timeout: serverRequestOptions.timeout || 60000,
+      timeout: serverRequestOptions.timeout || defaultTimeout,
       resetTimeoutOnProgress: serverRequestOptions.resetTimeoutOnProgress || false,
       maxTotalTimeout: serverRequestOptions.maxTotalTimeout,
     };
@@ -486,55 +538,64 @@ export const initializeClientsFromSettings = async (
     };
     serverInfos.push(serverInfo);
 
-    client
-      .connect(transport, initRequestOptions || requestOptions)
-      .then(() => {
+    // Helper function to attempt connection with retry logic for git-based installations
+    const attemptConnection = async (attempt: number = 1): Promise<void> => {
+      const maxRetries = isGitBased ? 2 : 1; // Allow 1 retry for git-based installations
+      
+      try {
+        // Validate git availability for git-based installations
+        if (isGitBased && attempt === 1) {
+          await validateGitAvailability(name);
+        }
+
+        console.log(`[${name}] Connection attempt ${attempt}/${maxRetries}${isGitBased ? ' (git-based)' : ''}`);
+        
+        await client.connect(transport, initRequestOptions || requestOptions);
+        
         console.log(`Successfully connected client for server: ${name}`);
         const capabilities: ServerCapabilities | undefined = client.getServerCapabilities();
         console.log(`Server capabilities: ${JSON.stringify(capabilities)}`);
 
         let dataError: Error | null = null;
         if (capabilities?.tools) {
-          client
-            .listTools({}, initRequestOptions || requestOptions)
-            .then((tools) => {
-              console.log(`Successfully listed ${tools.tools.length} tools for server: ${name}`);
-              serverInfo.tools = tools.tools.map((tool) => ({
-                name: `${name}-${tool.name}`,
-                description: tool.description || '',
-                inputSchema: cleanInputSchema(tool.inputSchema || {}),
-              }));
-              // Save tools as vector embeddings for search
-              saveToolsAsVectorEmbeddings(name, serverInfo.tools);
-            })
-            .catch((error) => {
-              console.error(
-                `Failed to list tools for server ${name} by error: ${error} with stack: ${error.stack}`,
-              );
-              dataError = error;
-            });
+          try {
+            const tools = await client.listTools({}, initRequestOptions || requestOptions);
+            console.log(`Successfully listed ${tools.tools.length} tools for server: ${name}`);
+            serverInfo.tools = tools.tools.map((tool) => ({
+              name: `${name}-${tool.name}`,
+              description: tool.description || '',
+              inputSchema: cleanInputSchema(tool.inputSchema || {}),
+            }));
+            // Save tools as vector embeddings for search
+            saveToolsAsVectorEmbeddings(name, serverInfo.tools);
+          } catch (toolsError) {
+            console.error(
+              `Failed to list tools for server ${name}:`,
+              toolsError,
+            );
+            dataError = toolsError as Error;
+          }
         }
 
         if (capabilities?.prompts) {
-          client
-            .listPrompts({}, initRequestOptions || requestOptions)
-            .then((prompts) => {
-              console.log(
-                `Successfully listed ${prompts.prompts.length} prompts for server: ${name}`,
-              );
-              serverInfo.prompts = prompts.prompts.map((prompt) => ({
-                name: `${name}-${prompt.name}`,
-                title: prompt.title,
-                description: prompt.description,
-                arguments: prompt.arguments,
-              }));
-            })
-            .catch((error) => {
-              console.error(
-                `Failed to list prompts for server ${name} by error: ${error} with stack: ${error.stack}`,
-              );
-              dataError = error;
-            });
+          try {
+            const prompts = await client.listPrompts({}, initRequestOptions || requestOptions);
+            console.log(
+              `Successfully listed ${prompts.prompts.length} prompts for server: ${name}`,
+            );
+            serverInfo.prompts = prompts.prompts.map((prompt) => ({
+              name: `${name}-${prompt.name}`,
+              title: prompt.title,
+              description: prompt.description,
+              arguments: prompt.arguments,
+            }));
+          } catch (promptsError) {
+            console.error(
+              `Failed to list prompts for server ${name}:`,
+              promptsError,
+            );
+            dataError = dataError || (promptsError as Error);
+          }
         }
 
         if (!dataError) {
@@ -545,16 +606,45 @@ export const initializeClientsFromSettings = async (
           setupKeepAlive(serverInfo, conf);
         } else {
           serverInfo.status = 'disconnected';
-          serverInfo.error = `Failed to list data: ${dataError} `;
+          serverInfo.error = `Failed to list data: ${dataError}`;
         }
-      })
-      .catch((error) => {
+      } catch (connectionError: any) {
         console.error(
-          `Failed to connect client for server ${name} by error: ${error} with stack: ${error.stack}`,
+          `Failed to connect client for server ${name} (attempt ${attempt}/${maxRetries}):`,
+          connectionError,
         );
+
+        // Enhanced error handling for git-based installations
+        if (isGitBased) {
+          const stderrLogs = (transport as any)._stderrLogs || [];
+          const gitErrorContext = stderrLogs.length > 0 
+            ? `\n\nInstallation logs:\n${stderrLogs.slice(-10).join('\n')}` // Show last 10 stderr lines
+            : '';
+
+          if (attempt < maxRetries) {
+            console.log(`[${name}] Retrying git-based installation (${attempt + 1}/${maxRetries})`);
+            // Wait a bit before retrying
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            return attemptConnection(attempt + 1);
+          } else {
+            serverInfo.status = 'disconnected';
+            serverInfo.error = `Failed to connect after ${maxRetries} attempts: ${connectionError.message}${gitErrorContext}`;
+          }
+        } else {
+          serverInfo.status = 'disconnected';
+          serverInfo.error = `Failed to connect: ${connectionError.message}`;
+        }
+      }
+    };
+
+    // Start the connection attempt
+    attemptConnection()
+      .catch((error) => {
+        console.error(`Unexpected error in connection attempt for ${name}:`, error);
         serverInfo.status = 'disconnected';
-        serverInfo.error = `Failed to connect: ${error.stack} `;
+        serverInfo.error = `Unexpected error: ${error.message}`;
       });
+
     console.log(`Initialized client for server: ${name}`);
   }
 
