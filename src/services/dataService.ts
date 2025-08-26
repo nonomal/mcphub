@@ -85,7 +85,7 @@ export class DataServiceImpl implements DataService {
 
     // Merge servers if provided
     if (newSettings.mcpServers) {
-      merged.mcpServers = { ...merged.mcpServers, ...newSettings.mcpServers };
+      merged.mcpServers = newSettings.mcpServers;
     }
 
     // Only admin users can modify users, groups, and system config
