@@ -66,6 +66,19 @@ export abstract class FileBasedDao<T, K = string> implements BaseDao<T, K> {
   protected abstract canDelete(key: K, user?: IUser): boolean;
   protected abstract canAccess(key: K, user?: IUser): boolean;
 
+  // Public accessor methods for DataService integration
+  public getData(): Record<string, any> | T[] {
+    return this.getDataFromSettings();
+  }
+
+  public filterDataByUser(items: T[], user?: IUser): T[] {
+    return this.filterByUser(items, user);
+  }
+
+  public checkAccess(key: K, user?: IUser): boolean {
+    return this.canAccess(key, user);
+  }
+
   async findAll(user?: IUser): Promise<T[]> {
     const data = this.getDataFromSettings();
     const items = Array.isArray(data) ? data : Object.values(data) as T[];
