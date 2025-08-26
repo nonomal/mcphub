@@ -1,0 +1,259 @@
+---
+title: "OpenAPI Tool Endpoints"
+description: "Direct access to individual MCP tools via OpenAPI-compatible endpoints"
+---
+
+# OpenAPI Tool Endpoints
+
+MCPHub provides OpenAPI-compatible endpoints for each MCP tool, enabling direct integration with external systems like OpenWebUI without requiring a proxy like MCPO.
+
+## Overview
+
+Each MCP tool in MCPHub is automatically exposed as an individual OpenAPI endpoint with its own schema and execution endpoint. This allows external applications to:
+
+- Discover available tools and their schemas
+- Execute tools directly via HTTP POST requests
+- Integrate with OpenAPI-compatible systems like OpenWebUI
+
+## Endpoints
+
+### 1. Tool Discovery
+
+List all available MCP tools with their endpoint information:
+
+```http
+GET /api/tools/openapi
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "tools": [
+      {
+        "serverName": "amap",
+        "toolName": "maps_weather",
+        "originalToolName": "amap-maps_weather",
+        "description": "根据城市名称或者标准adcode查询指定城市的天气",
+        "endpoint": "/api/tools/amap/maps_weather",
+        "openApiSchema": "/openapi/amap/maps_weather/openapi.json"
+      }
+    ],
+    "totalCount": 41
+  }
+}
+```
+
+### 2. OpenAPI Schema Generation
+
+Get the OpenAPI 3.1 specification for a specific tool:
+
+```http
+GET /openapi/{serverName}/{toolName}/openapi.json
+```
+
+**Example:**
+```http
+GET /openapi/amap/maps_weather/openapi.json
+```
+
+**Response:**
+```json
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "maps_weather Tool API",
+    "description": "根据城市名称或者标准adcode查询指定城市的天气",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000",
+      "description": "MCPHub Tool API Server"
+    }
+  ],
+  "paths": {
+    "/api/tools/amap/maps_weather": {
+      "post": {
+        "operationId": "call_maps_weather",
+        "summary": "Call maps_weather tool",
+        "description": "根据城市名称或者标准adcode查询指定城市的天气",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string",
+                    "description": "城市名称或者adcode"
+                  }
+                },
+                "required": ["city"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful tool execution"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### 3. Direct Tool Execution
+
+Execute a specific tool directly:
+
+```http
+POST /api/tools/{serverName}/{toolName}
+Content-Type: application/json
+
+{
+  "argument1": "value1",
+  "argument2": "value2"
+}
+```
+
+**Example:**
+```http
+POST /api/tools/amap/maps_weather
+Content-Type: application/json
+
+{
+  "city": "北京"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Weather information for Beijing..."
+      }
+    ],
+    "toolName": "amap-maps_weather",
+    "arguments": {
+      "city": "北京"
+    }
+  }
+}
+```
+
+## Authentication
+
+OpenAPI endpoints are **publicly accessible** by default to support external integrations. If you need to secure these endpoints, you can:
+
+1. Configure authentication in your reverse proxy
+2. Modify the routing configuration in MCPHub
+3. Use network-level security (VPN, firewall rules)
+
+## OpenWebUI Integration
+
+To use MCPHub tools in OpenWebUI:
+
+1. **Discover available tools:**
+   ```bash
+   curl http://your-mcphub-url/api/tools/openapi
+   ```
+
+2. **Add tools to OpenWebUI:**
+   For each tool you want to use, add its OpenAPI schema URL to OpenWebUI:
+   ```
+   http://your-mcphub-url/openapi/{serverName}/{toolName}/openapi.json
+   ```
+
+3. **Example configuration:**
+   ```json
+   {
+     "name": "MCPHub Weather Tool",
+     "openapi_url": "http://localhost:3000/openapi/amap/maps_weather/openapi.json"
+   }
+   ```
+
+## Tool Naming Convention
+
+- **Original MCP tool names** include server prefix: `amap-maps_weather`
+- **OpenAPI endpoint names** remove server prefix for cleaner URLs: `maps_weather`
+- **Tool discovery** returns both names for reference
+
+## Error Handling
+
+All endpoints return consistent error responses:
+
+```json
+{
+  "success": false,
+  "message": "Error description",
+  "error": "Detailed error information"
+}
+```
+
+Common error codes:
+- **404**: Server or tool not found
+- **400**: Invalid request parameters
+- **403**: Tool is disabled
+- **500**: Internal server error
+
+## Schema Generation
+
+OpenAPI schemas are automatically generated from MCP tool `inputSchema` definitions:
+
+- **MCP inputSchema properties** → OpenAPI requestBody schema
+- **Required fields** are preserved
+- **Property descriptions** are included
+- **Type information** is maintained
+- **Validation rules** are converted when possible
+
+## Limitations
+
+1. **No streaming support**: Responses are returned as complete JSON objects
+2. **No authentication**: Endpoints are publicly accessible by default
+3. **Tool availability**: Only enabled tools are exposed
+4. **Server dependency**: Tools are only available when their MCP servers are running
+
+## Examples
+
+### Using curl
+
+```bash
+# List all tools
+curl http://localhost:3000/api/tools/openapi
+
+# Get tool schema
+curl http://localhost:3000/openapi/playwright/browser_click/openapi.json
+
+# Execute tool
+curl -X POST http://localhost:3000/api/tools/playwright/browser_click \
+  -H "Content-Type: application/json" \
+  -d '{"element": "button", "ref": "submit-btn"}'
+```
+
+### Using Python
+
+```python
+import requests
+
+# Discover tools
+response = requests.get('http://localhost:3000/api/tools/openapi')
+tools = response.json()['data']['tools']
+
+# Execute a tool
+tool_response = requests.post(
+    'http://localhost:3000/api/tools/amap/maps_weather',
+    json={'city': '上海'}
+)
+result = tool_response.json()
+```
+
+This OpenAPI compatibility layer makes MCPHub tools accessible to any system that supports OpenAPI specifications, eliminating the need for proxy services like MCPO.

@@ -1,0 +1,259 @@
+---
+title: "OpenAPI 工具端点"
+description: "通过 OpenAPI 兼容端点直接访问各个 MCP 工具"
+---
+
+# OpenAPI 工具端点
+
+MCPHub 为每个 MCP 工具提供 OpenAPI 兼容端点，支持与 OpenWebUI 等外部系统直接集成，无需像 MCPO 这样的代理服务。
+
+## 概述
+
+MCPHub 中的每个 MCP 工具都自动暴露为独立的 OpenAPI 端点，拥有自己的模式和执行端点。这允许外部应用程序：
+
+- 发现可用工具及其模式
+- 通过 HTTP POST 请求直接执行工具
+- 与 OpenWebUI 等 OpenAPI 兼容系统集成
+
+## 端点
+
+### 1. 工具发现
+
+列出所有可用的 MCP 工具及其端点信息：
+
+```http
+GET /api/tools/openapi
+```
+
+**响应:**
+```json
+{
+  "success": true,
+  "data": {
+    "tools": [
+      {
+        "serverName": "amap",
+        "toolName": "maps_weather",
+        "originalToolName": "amap-maps_weather",
+        "description": "根据城市名称或者标准adcode查询指定城市的天气",
+        "endpoint": "/api/tools/amap/maps_weather",
+        "openApiSchema": "/openapi/amap/maps_weather/openapi.json"
+      }
+    ],
+    "totalCount": 41
+  }
+}
+```
+
+### 2. OpenAPI 模式生成
+
+获取特定工具的 OpenAPI 3.1 规范：
+
+```http
+GET /openapi/{serverName}/{toolName}/openapi.json
+```
+
+**示例:**
+```http
+GET /openapi/amap/maps_weather/openapi.json
+```
+
+**响应:**
+```json
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "maps_weather Tool API",
+    "description": "根据城市名称或者标准adcode查询指定城市的天气",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000",
+      "description": "MCPHub Tool API Server"
+    }
+  ],
+  "paths": {
+    "/api/tools/amap/maps_weather": {
+      "post": {
+        "operationId": "call_maps_weather",
+        "summary": "Call maps_weather tool",
+        "description": "根据城市名称或者标准adcode查询指定城市的天气",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string",
+                    "description": "城市名称或者adcode"
+                  }
+                },
+                "required": ["city"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful tool execution"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### 3. 直接工具执行
+
+直接执行特定工具：
+
+```http
+POST /api/tools/{serverName}/{toolName}
+Content-Type: application/json
+
+{
+  "argument1": "value1",
+  "argument2": "value2"
+}
+```
+
+**示例:**
+```http
+POST /api/tools/amap/maps_weather
+Content-Type: application/json
+
+{
+  "city": "北京"
+}
+```
+
+**响应:**
+```json
+{
+  "success": true,
+  "data": {
+    "content": [
+      {
+        "type": "text",
+        "text": "北京的天气信息..."
+      }
+    ],
+    "toolName": "amap-maps_weather",
+    "arguments": {
+      "city": "北京"
+    }
+  }
+}
+```
+
+## 身份验证
+
+OpenAPI 端点默认为**公开访问**，以支持外部集成。如果需要保护这些端点，您可以：
+
+1. 在反向代理中配置身份验证
+2. 修改 MCPHub 中的路由配置
+3. 使用网络级安全（VPN、防火墙规则）
+
+## OpenWebUI 集成
+
+在 OpenWebUI 中使用 MCPHub 工具：
+
+1. **发现可用工具:**
+   ```bash
+   curl http://your-mcphub-url/api/tools/openapi
+   ```
+
+2. **将工具添加到 OpenWebUI:**
+   对于每个要使用的工具，将其 OpenAPI 模式 URL 添加到 OpenWebUI：
+   ```
+   http://your-mcphub-url/openapi/{serverName}/{toolName}/openapi.json
+   ```
+
+3. **示例配置:**
+   ```json
+   {
+     "name": "MCPHub 天气工具",
+     "openapi_url": "http://localhost:3000/openapi/amap/maps_weather/openapi.json"
+   }
+   ```
+
+## 工具命名约定
+
+- **原始 MCP 工具名称** 包含服务器前缀：`amap-maps_weather`
+- **OpenAPI 端点名称** 移除服务器前缀以获得更简洁的 URL：`maps_weather`
+- **工具发现** 返回两种名称供参考
+
+## 错误处理
+
+所有端点返回一致的错误响应：
+
+```json
+{
+  "success": false,
+  "message": "错误描述",
+  "error": "详细错误信息"
+}
+```
+
+常见错误代码：
+- **404**: 服务器或工具未找到
+- **400**: 无效的请求参数
+- **403**: 工具被禁用
+- **500**: 内部服务器错误
+
+## 模式生成
+
+OpenAPI 模式从 MCP 工具的 `inputSchema` 定义自动生成：
+
+- **MCP inputSchema 属性** → OpenAPI requestBody 模式
+- **必填字段** 得到保留
+- **属性描述** 被包含
+- **类型信息** 得到维护
+- **验证规则** 在可能时进行转换
+
+## 限制
+
+1. **不支持流式传输**: 响应作为完整的 JSON 对象返回
+2. **无身份验证**: 端点默认公开访问
+3. **工具可用性**: 仅暴露已启用的工具
+4. **服务器依赖**: 工具仅在其 MCP 服务器运行时可用
+
+## 示例
+
+### 使用 curl
+
+```bash
+# 列出所有工具
+curl http://localhost:3000/api/tools/openapi
+
+# 获取工具模式
+curl http://localhost:3000/openapi/playwright/browser_click/openapi.json
+
+# 执行工具
+curl -X POST http://localhost:3000/api/tools/playwright/browser_click \
+  -H "Content-Type: application/json" \
+  -d '{"element": "button", "ref": "submit-btn"}'
+```
+
+### 使用 Python
+
+```python
+import requests
+
+# 发现工具
+response = requests.get('http://localhost:3000/api/tools/openapi')
+tools = response.json()['data']['tools']
+
+# 执行工具
+tool_response = requests.post(
+    'http://localhost:3000/api/tools/amap/maps_weather',
+    json={'city': '上海'}
+)
+result = tool_response.json()
+```
+
+这个 OpenAPI 兼容层使 MCPHub 工具可以被任何支持 OpenAPI 规范的系统访问，消除了对 MCPO 等代理服务的需求。
