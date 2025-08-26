@@ -5,7 +5,7 @@ import { getConfigFilePath } from '../utils/path.js';
 import { getPackageVersion } from '../utils/version.js';
 import { getDataService } from '../services/services.js';
 import { DataService } from '../services/dataService.js';
-import { getDAOFactory, type SettingsDAO } from '../dao/index.js';
+import { getDAOFactory, type SettingsDAO, FileSettingsDAO } from '../dao/index.js';
 
 dotenv.config();
 
@@ -22,6 +22,7 @@ const dataService: DataService = getDataService();
 
 // DAO instance for settings persistence
 let settingsDAO: SettingsDAO | null = null;
+let isDAOInitialized = false;
 
 // Settings cache (for backward compatibility and performance)
 let settingsCache: McpSettings | null = null;
@@ -33,8 +34,16 @@ const getSettingsDAO = async (): Promise<SettingsDAO> => {
   if (!settingsDAO) {
     const factory = getDAOFactory();
     settingsDAO = await factory.createSettingsDAO();
+    isDAOInitialized = true;
   }
   return settingsDAO;
+};
+
+/**
+ * Try to get an initialized DAO synchronously, or return null
+ */
+const getSettingsDAOSync = (): SettingsDAO | null => {
+  return isDAOInitialized ? settingsDAO : null;
 };
 
 export const getSettingsPath = (): string => {
@@ -67,6 +76,25 @@ export const loadOriginalSettingsSync = (): McpSettings => {
   // If cache exists, return cached data directly
   if (settingsCache) {
     return settingsCache;
+  }
+
+  // Try to use DAO if it's already initialized
+  const dao = getSettingsDAOSync();
+  if (dao && dao instanceof FileSettingsDAO) {
+    try {
+      // For FileSettingsDAO, we can try to read from its configured path
+      const filePath = (dao as any).getFilePath();
+      const settingsData = fs.readFileSync(filePath, 'utf8');
+      const settings = JSON.parse(settingsData);
+
+      // Update cache
+      settingsCache = settings;
+
+      console.log(`Loaded settings from ${filePath} via DAO`);
+      return settings;
+    } catch (error) {
+      console.warn('Failed to use DAO file path in sync mode:', error);
+    }
   }
 
   // Fallback to direct file reading for sync compatibility
@@ -136,9 +164,28 @@ export const saveSettingsAsync = async (settings: McpSettings, user?: IUser): Pr
  * @deprecated Use saveSettings() (async version) instead
  */
 export const saveSettingsSync = (settings: McpSettings, user?: IUser): boolean => {
-  const settingsPath = getSettingsPath();
   try {
     const mergedSettings = dataService.mergeSettings!(loadOriginalSettingsSync(), settings, user);
+    
+    // Try to use DAO if it's already initialized
+    const dao = getSettingsDAOSync();
+    if (dao && dao instanceof FileSettingsDAO) {
+      try {
+        const filePath = (dao as any).getFilePath();
+        fs.writeFileSync(filePath, JSON.stringify(mergedSettings, null, 2), 'utf8');
+        
+        // Update cache after successful save
+        settingsCache = mergedSettings;
+        
+        console.log(`Settings saved to ${filePath} via DAO`);
+        return true;
+      } catch (error) {
+        console.warn('Failed to use DAO file path in sync save:', error);
+      }
+    }
+
+    // Fallback to direct file writing
+    const settingsPath = getSettingsPath();
     fs.writeFileSync(settingsPath, JSON.stringify(mergedSettings, null, 2), 'utf8');
 
     // Update cache after successful save
@@ -146,7 +193,7 @@ export const saveSettingsSync = (settings: McpSettings, user?: IUser): boolean =
 
     return true;
   } catch (error) {
-    console.error(`Failed to save settings to ${settingsPath}:`, error);
+    console.error('Failed to save settings:', error);
     return false;
   }
 };
@@ -251,3 +298,20 @@ export const expandEnvVars = (value: string): string => {
 };
 
 export default defaultConfig;
+
+/**
+ * Initialize DAO synchronously for testing purposes
+ * This should only be used in test environments
+ */
+export const initializeDAOSync = async (): Promise<void> => {
+  await getSettingsDAO();
+};
+
+/**
+ * Reset DAO for testing purposes
+ */
+export const resetDAO = (): void => {
+  settingsDAO = null;
+  isDAOInitialized = false;
+  settingsCache = null;
+};

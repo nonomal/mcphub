@@ -29,10 +29,11 @@ export class FileSettingsDAO implements SettingsDAO {
         fs.mkdirSync(dir, { recursive: true });
       }
 
-      // Create default settings file if it doesn't exist
+      // Create default settings file only if it doesn't exist at all
       if (!await this.exists()) {
         await this.saveSettings(this.defaultSettings);
       }
+      // Note: We don't auto-fix corrupted files here - let loadSettings handle that
     } catch (error) {
       throw new Error(`Failed to initialize FileSettingsDAO: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
