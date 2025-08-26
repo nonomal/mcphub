@@ -7,5 +7,11 @@
       ]
     }
   },
-  "users": []
+  "users": [
+    {
+      "username": "admin",
+      "password": "$2b$10$nQpdvsi8fKRok4GGPu6qWOpO9s7j/wZeYISoBIFBws3Z0v.4ASTWi",
+      "isAdmin": true
+    }
+  ]
 }
