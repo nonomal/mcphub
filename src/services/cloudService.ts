@@ -7,14 +7,14 @@ import {
   MCPRouterListToolsResponse,
   MCPRouterCallToolResponse,
 } from '../types/index.js';
-import { loadOriginalSettings } from '../config/index.js';
+import { loadOriginalSettingsSync } from '../config/index.js';
 
 // MCPRouter API default base URL
 const DEFAULT_MCPROUTER_API_BASE = 'https://api.mcprouter.to/v1';
 
 // Get MCPRouter API config from system configuration
 const getMCPRouterConfig = () => {
-  const settings = loadOriginalSettings();
+  const settings = loadOriginalSettingsSync();
   const mcpRouterConfig = settings.systemConfig?.mcpRouter;
 
   return {

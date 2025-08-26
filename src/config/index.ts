@@ -5,6 +5,7 @@ import { getConfigFilePath } from '../utils/path.js';
 import { getPackageVersion } from '../utils/version.js';
 import { getDataService } from '../services/services.js';
 import { DataService } from '../services/dataService.js';
+import { getDAOFactory, type SettingsDAO } from '../dao/index.js';
 
 dotenv.config();
 
@@ -19,19 +20,56 @@ const defaultConfig = {
 
 const dataService: DataService = getDataService();
 
-// Settings cache
+// DAO instance for settings persistence
+let settingsDAO: SettingsDAO | null = null;
+
+// Settings cache (for backward compatibility and performance)
 let settingsCache: McpSettings | null = null;
+
+/**
+ * Get or create the settings DAO instance
+ */
+const getSettingsDAO = async (): Promise<SettingsDAO> => {
+  if (!settingsDAO) {
+    const factory = getDAOFactory();
+    settingsDAO = await factory.createSettingsDAO();
+  }
+  return settingsDAO;
+};
 
 export const getSettingsPath = (): string => {
   return getConfigFilePath('mcp_settings.json', 'Settings');
 };
 
-export const loadOriginalSettings = (): McpSettings => {
+export const loadOriginalSettings = async (): Promise<McpSettings> => {
+  try {
+    const dao = await getSettingsDAO();
+    const settings = await dao.loadSettings();
+    
+    // Update local cache for backward compatibility
+    settingsCache = settings;
+    
+    return settings;
+  } catch (error) {
+    console.error('Failed to load settings via DAO:', error);
+    // Fallback to default settings
+    const defaultSettings = { mcpServers: {}, users: [] };
+    settingsCache = defaultSettings;
+    return defaultSettings;
+  }
+};
+
+/**
+ * Synchronous version for backward compatibility
+ * @deprecated Use loadOriginalSettings() (async version) instead
+ */
+export const loadOriginalSettingsSync = (): McpSettings => {
   // If cache exists, return cached data directly
   if (settingsCache) {
     return settingsCache;
   }
 
+  // Fallback to direct file reading for sync compatibility
   const settingsPath = getSettingsPath();
   try {
     const settingsData = fs.readFileSync(settingsPath, 'utf8');
@@ -54,13 +92,53 @@ export const loadOriginalSettings = (): McpSettings => {
 };
 
 export const loadSettings = (user?: IUser): McpSettings => {
-  return dataService.filterSettings!(loadOriginalSettings(), user);
+  return dataService.filterSettings!(loadOriginalSettingsSync(), user);
 };
 
 export const saveSettings = (settings: McpSettings, user?: IUser): boolean => {
+  return saveSettingsSync(settings, user);
+};
+
+export const clearSettingsCache = (): void => {
+  clearSettingsCacheSync();
+};
+
+export const getSettingsCacheInfo = (): { hasCache: boolean } => {
+  return getSettingsCacheInfoSync();
+};
+
+// Async versions for new code that can handle promises
+export const loadSettingsAsync = async (user?: IUser): Promise<McpSettings> => {
+  const settings = await loadOriginalSettings();
+  return dataService.filterSettings!(settings, user);
+};
+
+export const saveSettingsAsync = async (settings: McpSettings, user?: IUser): Promise<boolean> => {
+  try {
+    const dao = await getSettingsDAO();
+    const mergedSettings = dataService.mergeSettings!(await loadOriginalSettings(), settings, user);
+    const success = await dao.saveSettings(mergedSettings);
+    
+    if (success) {
+      // Update cache after successful save
+      settingsCache = mergedSettings;
+    }
+    
+    return success;
+  } catch (error) {
+    console.error('Failed to save settings via DAO:', error);
+    return false;
+  }
+};
+
+/**
+ * Synchronous version for backward compatibility
+ * @deprecated Use saveSettings() (async version) instead
+ */
+export const saveSettingsSync = (settings: McpSettings, user?: IUser): boolean => {
   const settingsPath = getSettingsPath();
   try {
-    const mergedSettings = dataService.mergeSettings!(loadOriginalSettings(), settings, user);
+    const mergedSettings = dataService.mergeSettings!(loadOriginalSettingsSync(), settings, user);
     fs.writeFileSync(settingsPath, JSON.stringify(mergedSettings, null, 2), 'utf8');
 
     // Update cache after successful save
@@ -74,16 +152,51 @@ export const saveSettings = (settings: McpSettings, user?: IUser): boolean => {
 };
 
 /**
- * Clear settings cache, force next loadSettings call to re-read from file
+ * Clear settings cache, force next loadSettings call to re-read from storage
  */
-export const clearSettingsCache = (): void => {
+export const clearSettingsCacheAsync = async (): Promise<void> => {
+  settingsCache = null;
+  
+  try {
+    const dao = await getSettingsDAO();
+    dao.clearCache();
+  } catch (error) {
+    console.error('Failed to clear DAO cache:', error);
+  }
+};
+
+/**
+ * Synchronous version for backward compatibility
+ * @deprecated Use clearSettingsCache() (async version) instead
+ */
+export const clearSettingsCacheSync = (): void => {
   settingsCache = null;
 };
 
 /**
  * Get current cache status (for debugging)
  */
-export const getSettingsCacheInfo = (): { hasCache: boolean } => {
+export const getSettingsCacheInfoAsync = async (): Promise<{ hasCache: boolean; daoInfo?: any }> => {
+  const result = {
+    hasCache: settingsCache !== null,
+    daoInfo: undefined as any,
+  };
+  
+  try {
+    const dao = await getSettingsDAO();
+    result.daoInfo = dao.getCacheInfo();
+  } catch (error) {
+    console.error('Failed to get DAO cache info:', error);
+  }
+  
+  return result;
+};
+
+/**
+ * Synchronous version for backward compatibility
+ * @deprecated Use getSettingsCacheInfo() (async version) instead
+ */
+export const getSettingsCacheInfoSync = (): { hasCache: boolean } => {
   return {
     hasCache: settingsCache !== null,
   };
