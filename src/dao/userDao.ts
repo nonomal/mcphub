@@ -26,7 +26,7 @@ export class UserDao extends FileBasedDao<IUser, string> {
 
   protected filterByUser(items: IUser[], user?: IUser): IUser[] {
     // Non-admin users can only see their own user data
-    if (!user || !user.isAdmin) {
+    if (user && !user.isAdmin) {
       return user ? items.filter(item => item.username === user.username) : [];
     }
     // Admin users can see all users
@@ -46,7 +46,7 @@ export class UserDao extends FileBasedDao<IUser, string> {
     // Non-admin users can only update their own data (except isAdmin field)
     if (user && user.username === key) {
       // Non-admin users cannot modify their admin status
-      return !itemUpdates.hasOwnProperty('isAdmin');
+      return !Object.prototype.hasOwnProperty.call(itemUpdates, 'isAdmin');
     }
     return false;
   }

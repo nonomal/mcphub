@@ -20,13 +20,13 @@ export class UserConfigDao extends FileBasedDao<UserConfig, string> {
     return saveSettings(updatedSettings);
   }
 
-  protected extractKey(item: UserConfig & { username?: string }): string {
+  protected extractKey(_item: UserConfig & { username?: string }): string {
     // For user configs, we need to pass the username separately since UserConfig doesn't contain it
     // This will be handled by overriding the create method
     throw new Error('extractKey should not be called directly for UserConfigDao. Use createForUser instead.');
   }
 
-  protected filterByUser(items: UserConfig[], user?: IUser): UserConfig[] {
+  protected filterByUser(items: UserConfig[], _user?: IUser): UserConfig[] {
     // This method is not used since we override findAll to work with the Record structure
     return items;
   }
@@ -115,7 +115,7 @@ export class UserConfigDao extends FileBasedDao<UserConfig, string> {
   /**
    * Override create method to require username parameter
    */
-  async create(item: UserConfig, user?: IUser): Promise<UserConfig> {
+  async create(_item: UserConfig, _user?: IUser): Promise<UserConfig> {
     throw new Error('Use createForUser method for UserConfigDao instead of create');
   }
 

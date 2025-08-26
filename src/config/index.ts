@@ -3,6 +3,8 @@ import fs from 'fs';
 import { McpSettings, IUser } from '../types/index.js';
 import { getConfigFilePath } from '../utils/path.js';
 import { getPackageVersion } from '../utils/version.js';
+import { getDataService } from '../services/services.js';
+import { DataService } from '../services/dataService.js';
 
 dotenv.config();
 
@@ -14,6 +16,8 @@ const defaultConfig = {
   mcpHubName: 'mcphub',
   mcpHubVersion: getPackageVersion(),
 };
+
+const dataService: DataService = getDataService();
 
 // Settings cache
 let settingsCache: McpSettings | null = null;
@@ -46,42 +50,6 @@ export const loadOriginalSettings = (): McpSettings => {
     settingsCache = defaultSettings;
 
     return defaultSettings;
-  }
-};
-
-export const loadSettings = (user?: IUser): McpSettings => {
-  // For backward compatibility, load original settings and filter them
-  // This will be used when DAO layer is not available
-  const originalSettings = loadOriginalSettings();
-  
-  if (!user) {
-    // No user context, return minimal settings
-    return {
-      mcpServers: {},
-      users: [],
-      groups: [],
-    };
-  }
-
-  // Basic filtering without DAO layer to avoid circular dependencies
-  // For advanced filtering, use DataService.filterSettings instead
-  return originalSettings;
-};
-
-export const saveSettings = (settings: McpSettings, user?: IUser): boolean => {
-  // For now, just save the settings directly
-  // In the future, this can be enhanced to use DAO layer for validation
-  const settingsPath = getSettingsPath();
-  try {
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-
-    // Update cache after successful save
-    settingsCache = settings;
-
-    return true;
-  } catch (error) {
-    console.error(`Failed to save settings to ${settingsPath}:`, error);
-    return false;
   }
 };
 
@@ -153,10 +121,7 @@ export const expandEnvVars = (value: string): string => {
  * Load settings with DAO-based filtering
  * Use this for new code that needs proper permission filtering
  */
-export const loadSettingsWithDao = async (user?: IUser): Promise<McpSettings> => {
-  // Import here to avoid circular dependency
-  const { getDataService } = await import('../services/services.js');
-  const dataService = getDataService();
+export const loadSettings = (user?: IUser): McpSettings => {
   return dataService.filterSettings(loadOriginalSettings(), user);
 };
 
@@ -164,11 +129,7 @@ export const loadSettingsWithDao = async (user?: IUser): Promise<McpSettings> =>
  * Save settings with DAO-based merging and validation
  * Use this for new code that needs proper permission handling
  */
-export const saveSettingsWithDao = async (settings: McpSettings, user?: IUser): Promise<boolean> => {
-  // Import here to avoid circular dependency
-  const { getDataService } = await import('../services/services.js');
-  const dataService = getDataService();
-  
+export const saveSettings = (settings: McpSettings, user?: IUser): boolean => {
   const settingsPath = getSettingsPath();
   try {
     const mergedSettings = dataService.mergeSettings(loadOriginalSettings(), settings, user);

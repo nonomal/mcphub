@@ -23,13 +23,13 @@ export class SystemConfigDao extends FileBasedDao<SystemConfig, 'system'> {
     return saveSettings(updatedSettings);
   }
 
-  protected extractKey(item: SystemConfig): 'system' {
+  protected extractKey(_item: SystemConfig): 'system' {
     return SystemConfigDao.SYSTEM_KEY;
   }
 
   protected filterByUser(items: SystemConfig[], user?: IUser): SystemConfig[] {
     // Only admin users can view system configuration
-    if (user?.isAdmin === true) {
+    if (!user || user?.isAdmin === true) {
       return items;
     }
     return [];

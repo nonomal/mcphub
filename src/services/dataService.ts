@@ -26,16 +26,6 @@ export class DataServiceImpl implements DataService {
   }
 
   filterSettings(settings: McpSettings, user?: IUser): McpSettings {
-    // Use DAO layer to filter settings based on user permissions
-    if (!user) {
-      // No user context, return minimal settings
-      return {
-        mcpServers: {},
-        users: [],
-        groups: [],
-      };
-    }
-
     const filteredSettings: McpSettings = {
       mcpServers: {},
       users: [],
@@ -62,7 +52,7 @@ export class DataServiceImpl implements DataService {
     filteredSettings.groups = groupDao.filterDataByUser(groupData, user);
 
     // Include system config for admin users
-    if (user.isAdmin) {
+    if (user?.isAdmin) {
       const systemConfigDao = DaoFactory.getSystemConfigDao();
       const systemData = systemConfigDao.getData() as Record<string, SystemConfig>;
       if (Object.keys(systemData).length > 0) {
@@ -79,7 +69,7 @@ export class DataServiceImpl implements DataService {
       // Non-admin users can only see their own user config
       const userConfigDao = DaoFactory.getUserConfigDao();
       const userConfigData = userConfigDao.getData() as Record<string, UserConfig>;
-      if (userConfigData[user.username]) {
+      if (user?.username && userConfigData[user.username]) {
         filteredSettings.userConfigs = {
           [user.username]: userConfigData[user.username]
         };

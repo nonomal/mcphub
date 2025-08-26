@@ -20,24 +20,20 @@ export class ServerDao extends FileBasedDao<ServerConfig, string> {
     return saveSettings(updatedSettings);
   }
 
-  protected extractKey(item: ServerConfig & { name?: string }): string {
+  protected extractKey(_item: ServerConfig & { name?: string }): string {
     // For servers, we need to pass the key separately since ServerConfig doesn't contain the name
     // This will be handled by overriding the create method
     throw new Error('extractKey should not be called directly for ServerDao. Use createWithName instead.');
   }
 
   protected filterByUser(items: ServerConfig[], user?: IUser): ServerConfig[] {
-    if (!user) {
-      return [];
-    }
-
     // Filter servers based on ownership
     return items.filter(server => {
       // If no owner specified, default to 'admin'
       const owner = server.owner || 'admin';
       
       // Admin users can see all servers
-      if (user.isAdmin === true) {
+      if (!user || user.isAdmin === true) {
         return true;
       }
       
@@ -138,7 +134,7 @@ export class ServerDao extends FileBasedDao<ServerConfig, string> {
   /**
    * Override create method to require name parameter
    */
-  async create(item: ServerConfig, user?: IUser): Promise<ServerConfig> {
+  async create(_item: ServerConfig, _user?: IUser): Promise<ServerConfig> {
     throw new Error('Use createWithName method for ServerDao instead of create');
   }
 

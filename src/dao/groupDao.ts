@@ -25,16 +25,12 @@ export class GroupDao extends FileBasedDao<IGroup, string> {
   }
 
   protected filterByUser(items: IGroup[], user?: IUser): IGroup[] {
-    if (!user) {
-      return [];
-    }
-
     return items.filter(group => {
       // If no owner specified, default to 'admin'
       const owner = group.owner || 'admin';
       
       // Admin users can see all groups
-      if (user.isAdmin === true) {
+      if (!user || user.isAdmin === true) {
         return true;
       }
       
