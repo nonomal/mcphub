@@ -63,6 +63,11 @@ import { callTool } from '../controllers/toolController.js';
 import { getPrompt } from '../controllers/promptController.js';
 import { uploadDxtFile, uploadMiddleware } from '../controllers/dxtController.js';
 import { healthCheck } from '../controllers/healthController.js';
+import { 
+  getToolOpenAPISchema, 
+  executeToolDirect, 
+  listToolsOpenAPI 
+} from '../controllers/openApiController.js';
 import { auth } from '../middlewares/auth.js';
 
 const router = express.Router();
@@ -110,6 +115,11 @@ export const initRoutes = (app: express.Application): void => {
 
   // Tool management routes
   router.post('/tools/call/:server', callTool);
+
+  // OpenAPI tool routes (no auth required for discovery and execution)
+  app.get('/openapi/:serverName/:toolName/openapi.json', getToolOpenAPISchema);
+  app.get(`${config.basePath}/api/tools/openapi`, listToolsOpenAPI);
+  app.post(`${config.basePath}/api/tools/:serverName/:toolName`, executeToolDirect);
 
   // Prompt management routes
   router.post('/mcp/:serverName/prompts/:promptName', getPrompt);
