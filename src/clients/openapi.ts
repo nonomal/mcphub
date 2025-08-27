@@ -283,20 +283,138 @@ export class OpenAPIClient {
       }
     }
 
-    // Handle request body
+    // Handle request body - enhanced for better SpringDoc support
     if (operation.requestBody && 'content' in operation.requestBody) {
       const requestBody = operation.requestBody as OpenAPIV3.RequestBodyObject;
       const jsonContent = requestBody.content?.['application/json'];
 
       if (jsonContent?.schema) {
-        properties['body'] = jsonContent.schema;
-        if (requestBody.required) {
-          required.push('body');
+        // Create a set of existing property names to avoid conflicts
+        const existingProperties = new Set(Object.keys(properties));
+        
+        // Try to flatten object schemas to show individual fields
+        const flattened = this.flattenRequestBodySchema(jsonContent.schema, requestBody.required, existingProperties);
+        
+        if (flattened.properties && Object.keys(flattened.properties).length > 0) {
+          // Add flattened properties to the main schema
+          Object.assign(properties, flattened.properties);
+          
+          // Add required fields from the request body
+          if (flattened.required && flattened.required.length > 0) {
+            required.push(...flattened.required);
+          }
+        } else {
+          // Fallback to original behavior for complex schemas that can't be flattened
+          properties['body'] = jsonContent.schema;
+          if (requestBody.required) {
+            required.push('body');
+          }
         }
       }
     }
 
     return schema;
+  }
+
+  /**
+   * Reconstructs the request body from flattened fields.
+   * This reverses the flattening process when calling the actual API.
+   */
+  private reconstructRequestBody(tool: OpenAPIToolInfo, args: Record<string, unknown>): Record<string, unknown> | null {
+    if (!tool.requestBody || !('content' in tool.requestBody)) {
+      return null;
+    }
+
+    const requestBody = tool.requestBody as OpenAPIV3.RequestBodyObject;
+    const jsonContent = requestBody.content?.['application/json'];
+    
+    if (!jsonContent?.schema) {
+      return null;
+    }
+
+    // Handle reference objects (should be already dereferenced)
+    if ('$ref' in jsonContent.schema) {
+      return null;
+    }
+
+    const schemaObj = jsonContent.schema as OpenAPIV3.SchemaObject;
+
+    // Only reconstruct for object schemas
+    if (schemaObj.type !== 'object' || !schemaObj.properties) {
+      return null;
+    }
+
+    const reconstructed: Record<string, unknown> = {};
+    
+    // Get existing property names from path/query parameters to handle conflicts
+    const pathParams = tool.parameters?.filter((p) => p.in === 'path').map(p => p.name) || [];
+    const queryParams = tool.parameters?.filter((p) => p.in === 'query').map(p => p.name) || [];
+    const existingParams = new Set([...pathParams, ...queryParams]);
+
+    // Map flattened field names back to original property names
+    Object.keys(schemaObj.properties).forEach(originalPropName => {
+      // Determine what the flattened field name would be
+      const flattenedFieldName = existingParams.has(originalPropName) 
+        ? `body_${originalPropName}` 
+        : originalPropName;
+
+      // If the flattened field exists in args, add it to the reconstructed body
+      if (args[flattenedFieldName] !== undefined) {
+        reconstructed[originalPropName] = args[flattenedFieldName];
+      }
+    });
+
+    return Object.keys(reconstructed).length > 0 ? reconstructed : null;
+  }
+
+  /**
+   * Flattens request body schemas to expose individual fields instead of a single "body" field.
+   * This improves the user experience for SpringDoc and similar OpenAPI generators.
+   */
+  private flattenRequestBodySchema(
+    schema: OpenAPIV3.SchemaObject | OpenAPIV3.ReferenceObject,
+    isRequired?: boolean,
+    existingProperties?: Set<string>,
+  ): { properties: Record<string, unknown>; required: string[] } {
+    const result: { properties: Record<string, unknown>; required: string[] } = {
+      properties: {},
+      required: [],
+    };
+
+    // Handle reference objects (should be already dereferenced by SwaggerParser)
+    if ('$ref' in schema) {
+      // This shouldn't happen after dereferencing, but handle gracefully
+      return result;
+    }
+
+    const schemaObj = schema as OpenAPIV3.SchemaObject;
+
+    // Only flatten object schemas with properties
+    if (schemaObj.type === 'object' && schemaObj.properties) {
+      // Copy all properties from the request body schema
+      Object.entries(schemaObj.properties).forEach(([propName, propSchema]) => {
+        // Check for naming conflicts with existing properties (path/query params)
+        let fieldName = propName;
+        if (existingProperties?.has(propName)) {
+          fieldName = `body_${propName}`;
+        }
+        
+        result.properties[fieldName] = propSchema;
+      });
+
+      // Handle required fields
+      if (schemaObj.required && schemaObj.required.length > 0) {
+        result.required = schemaObj.required.map(field => {
+          // Apply same naming logic for required fields
+          return existingProperties?.has(field) ? `body_${field}` : field;
+        });
+      }
+
+      return result;
+    }
+
+    // For non-object schemas (arrays, primitives, etc.), don't flatten
+    return result;
   }
 
   async callTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {
@@ -335,9 +453,18 @@ export class OpenAPIClient {
         params: queryParams,
       };
 
-      // Add request body if applicable
-      if (args.body && ['post', 'put', 'patch'].includes(tool.method)) {
-        requestConfig.data = args.body;
+      // Add request body if applicable - enhanced for flattened fields
+      if (['post', 'put', 'patch'].includes(tool.method)) {
+        // Check if we have the original 'body' field (non-flattened)
+        if (args.body) {
+          requestConfig.data = args.body;
+        } else {
+          // Reconstruct request body from flattened fields
+          const requestBody = this.reconstructRequestBody(tool, args);
+          if (requestBody && Object.keys(requestBody).length > 0) {
+            requestConfig.data = requestBody;
+          }
+        }
       }
 
       // Add headers if any header parameters are defined
