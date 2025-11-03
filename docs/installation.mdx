@@ -294,22 +294,47 @@ Optional for Smart Routing:
           labels:
             app: mcphub
         spec:
+          initContainers:
+            - name: prepare-config
+              image: busybox:1.28
+              command:
+                [
+                  "sh",
+                  "-c",
+                  "cp /config-ro/mcp_settings.json /etc/mcphub/mcp_settings.json",
+                ]
+              volumeMounts:
+                - name: config
+                  mountPath: /config-ro
+                  readOnly: true
+                - name: app-storage
+                  mountPath: /etc/mcphub
           containers:
-          - name: mcphub
-            image: samanhappy/mcphub:latest
-            ports:
-            - containerPort: 3000
-            env:
-            - name: PORT
-              value: "3000"
-            volumeMounts:
-            - name: config
-              mountPath: /app/mcp_settings.json
-              subPath: mcp_settings.json
+            - name: mcphub
+              image: samanhappy/mcphub:latest
+              ports:
+                - containerPort: 3000
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+              env:
+                - name: PORT
+                  value: "3000"
+                - name: MCPHUB_SETTING_PATH
+                  value: /etc/mcphub/mcp_settings.json
+              volumeMounts:
+                - name: app-storage
+                  mountPath: /etc/mcphub
           volumes:
-          - name: config
-            configMap:
-              name: mcphub-config
+            - name: config
+              configMap:
+                name: mcphub-config
+            - name: app-storage
+              emptyDir: {}
     ```
 
     #### 3. Service
