@@ -9,6 +9,8 @@ import { loadSettings } from '../config/index.js';
 import config from '../config/index.js';
 import { UserContextService } from './userContextService.js';
 import { RequestContextService } from './requestContextService.js';
+import { IUser } from '../types/index.js';
+import { resolveOAuthUserFromToken } from '../utils/oauthBearer.js';
 
 export const transports: { [sessionId: string]: { transport: Transport; group: string; needsInitialization?: boolean } } = {};
 
@@ -19,8 +21,14 @@ export const getGroup = (sessionId: string): string => {
   return transports[sessionId]?.group || '';
 };
 
-// Helper function to validate bearer auth
-const validateBearerAuth = (req: Request): boolean => {
+type BearerAuthResult =
+  | { valid: true; user?: IUser }
+  | {
+      valid: false;
+      reason: 'missing' | 'invalid';
+    };
+
+const validateBearerAuth = (req: Request): BearerAuthResult => {
   const settings = loadSettings();
   const routingConfig = settings.systemConfig?.routing || {
     enableGlobalRoute: true,
@@ -32,28 +40,144 @@ const validateBearerAuth = (req: Request): boolean => {
   if (routingConfig.enableBearerAuth) {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return false;
+      return { valid: false, reason: 'missing' };
     }
 
     const token = authHeader.substring(7); // Remove "Bearer " prefix
-    return token === routingConfig.bearerAuthKey;
+    if (token.trim().length === 0) {
+      return { valid: false, reason: 'missing' };
+    }
+
+    if (token === routingConfig.bearerAuthKey) {
+      return { valid: true };
+    }
+
+    const oauthUser = resolveOAuthUserFromToken(token);
+    if (oauthUser) {
+      return { valid: true, user: oauthUser };
+    }
+
+    return { valid: false, reason: 'invalid' };
   }
 
-  return true;
+  return { valid: true };
+};
+
+const attachUserContextFromBearer = (result: BearerAuthResult, res: Response): void => {
+  if (!result.valid || !result.user) {
+    return;
+  }
+
+  const userContextService = UserContextService.getInstance();
+  if (userContextService.hasUser()) {
+    return;
+  }
+
+  userContextService.setCurrentUser(result.user);
+
+  let cleanedUp = false;
+  const cleanup = () => {
+    if (cleanedUp) {
+      return;
+    }
+    cleanedUp = true;
+    userContextService.clearCurrentUser();
+  };
+
+  res.on('finish', cleanup);
+  res.on('close', cleanup);
+};
+
+const escapeHeaderValue = (value: string): string => {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+};
+
+const buildResourceMetadataUrl = (req: Request): string | undefined => {
+  const forwardedProto = (req.headers['x-forwarded-proto'] as string | undefined)
+    ?.split(',')[0]
+    ?.trim();
+  const protocol = forwardedProto || req.protocol || 'http';
+
+  const forwardedHost = (req.headers['x-forwarded-host'] as string | undefined)
+    ?.split(',')[0]
+    ?.trim();
+  const host =
+    forwardedHost ||
+    (req.headers.host as string | undefined) ||
+    (req.headers[':authority'] as string | undefined);
+
+  if (!host) {
+    return undefined;
+  }
+
+  const origin = `${protocol}://${host}`;
+  const basePath = config.basePath || '';
+
+  if (!basePath || basePath === '/') {
+    return `${origin}/.well-known/oauth-protected-resource`;
+  }
+
+  const normalizedBasePath = `${basePath.startsWith('/') ? '' : '/'}${basePath}`.replace(
+    /\/+$/,
+    '',
+  );
+
+  return `${origin}/.well-known/oauth-protected-resource${normalizedBasePath}`;
+};
+
+const sendBearerAuthError = (req: Request, res: Response, reason: 'missing' | 'invalid'): void => {
+  const errorDescription =
+    reason === 'missing' ? 'No authorization provided' : 'Invalid bearer token';
+
+  const resourceMetadataUrl = buildResourceMetadataUrl(req);
+  const headerParts = [
+    'error="invalid_token"',
+    `error_description="${escapeHeaderValue(errorDescription)}"`,
+  ];
+
+  if (resourceMetadataUrl) {
+    headerParts.push(`resource_metadata="${escapeHeaderValue(resourceMetadataUrl)}"`);
+  }
+
+  console.warn(
+    reason === 'missing'
+      ? 'Bearer authentication required but no authorization header was provided'
+      : 'Bearer authentication failed due to invalid bearer token',
+  );
+
+  res.setHeader('WWW-Authenticate', `Bearer ${headerParts.join(', ')}`);
+
+  const responseBody: {
+    error: string;
+    error_description: string;
+    resource_metadata?: string;
+  } = {
+    error: 'invalid_token',
+    error_description: errorDescription,
+  };
+
+  if (resourceMetadataUrl) {
+    responseBody.resource_metadata = resourceMetadataUrl;
+  }
+
+  res.status(401).json(responseBody);
 };
 
 export const handleSseConnection = async (req: Request, res: Response): Promise<void> => {
   // User context is now set by sseUserContextMiddleware
   const userContextService = UserContextService.getInstance();
-  const currentUser = userContextService.getCurrentUser();
-  const username = currentUser?.username;
 
   // Check bearer auth using filtered settings
-  if (!validateBearerAuth(req)) {
-    console.warn('Bearer authentication failed or not provided');
-    res.status(401).send('Bearer authentication required or invalid token');
+  const bearerAuthResult = validateBearerAuth(req);
+  if (!bearerAuthResult.valid) {
+    sendBearerAuthError(req, res, bearerAuthResult.reason);
     return;
   }
+
+  attachUserContextFromBearer(bearerAuthResult, res);
+
+  const currentUser = userContextService.getCurrentUser();
+  const username = currentUser?.username;
 
   const settings = loadSettings();
   const routingConfig = settings.systemConfig?.routing || {
@@ -102,14 +226,18 @@ export const handleSseConnection = async (req: Request, res: Response): Promise<
 export const handleSseMessage = async (req: Request, res: Response): Promise<void> => {
   // User context is now set by sseUserContextMiddleware
   const userContextService = UserContextService.getInstance();
-  const currentUser = userContextService.getCurrentUser();
-  const username = currentUser?.username;
 
   // Check bearer auth using filtered settings
-  if (!validateBearerAuth(req)) {
-    res.status(401).send('Bearer authentication required or invalid token');
+  const bearerAuthResult = validateBearerAuth(req);
+  if (!bearerAuthResult.valid) {
+    sendBearerAuthError(req, res, bearerAuthResult.reason);
     return;
   }
+
+  attachUserContextFromBearer(bearerAuthResult, res);
+
+  const currentUser = userContextService.getCurrentUser();
+  const username = currentUser?.username;
 
   const sessionId = req.query.sessionId as string;
 
@@ -220,6 +348,16 @@ async function createNewSession(group: string, username?: string): Promise<Strea
 export const handleMcpPostRequest = async (req: Request, res: Response): Promise<void> => {
   // User context is now set by sseUserContextMiddleware
   const userContextService = UserContextService.getInstance();
+
+  // Check bearer auth using filtered settings
+  const bearerAuthResult = validateBearerAuth(req);
+  if (!bearerAuthResult.valid) {
+    sendBearerAuthError(req, res, bearerAuthResult.reason);
+    return;
+  }
+
+  attachUserContextFromBearer(bearerAuthResult, res);
+
   const currentUser = userContextService.getCurrentUser();
   const username = currentUser?.username;
 
@@ -229,12 +367,6 @@ export const handleMcpPostRequest = async (req: Request, res: Response): Promise
   console.log(
     `Handling MCP post request for sessionId: ${sessionId} and group: ${group}${username ? ` for user: ${username}` : ''} with body: ${JSON.stringify(body)}`,
   );
-
-  // Check bearer auth using filtered settings
-  if (!validateBearerAuth(req)) {
-    res.status(401).send('Bearer authentication required or invalid token');
-    return;
-  }
 
   // Get filtered settings based on user context (after setting user context)
   const settings = loadSettings();
@@ -443,16 +575,20 @@ export const handleMcpPostRequest = async (req: Request, res: Response): Promise
 export const handleMcpOtherRequest = async (req: Request, res: Response) => {
   // User context is now set by sseUserContextMiddleware
   const userContextService = UserContextService.getInstance();
+
+  // Check bearer auth using filtered settings
+  const bearerAuthResult = validateBearerAuth(req);
+  if (!bearerAuthResult.valid) {
+    sendBearerAuthError(req, res, bearerAuthResult.reason);
+    return;
+  }
+
+  attachUserContextFromBearer(bearerAuthResult, res);
+
   const currentUser = userContextService.getCurrentUser();
   const username = currentUser?.username;
 
   console.log(`Handling MCP other request${username ? ` for user: ${username}` : ''}`);
-
-  // Check bearer auth using filtered settings
-  if (!validateBearerAuth(req)) {
-    res.status(401).send('Bearer authentication required or invalid token');
-    return;
-  }
 
   const sessionId = req.headers['mcp-session-id'] as string | undefined;
   if (!sessionId) {

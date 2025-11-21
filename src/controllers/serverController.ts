@@ -12,6 +12,7 @@ import {
 import { loadSettings, saveSettings } from '../config/index.js';
 import { syncAllServerToolsEmbeddings } from '../services/vectorSearchService.js';
 import { createSafeJSON } from '../utils/serialization.js';
+import { cloneDefaultOAuthServerConfig } from '../constants/oauthServerDefaults.js';
 
 export const getAllServers = async (_: Request, res: Response): Promise<void> => {
   try {
@@ -508,33 +509,64 @@ export const updateToolDescription = async (req: Request, res: Response): Promis
 
 export const updateSystemConfig = (req: Request, res: Response): void => {
   try {
-    const { routing, install, smartRouting, mcpRouter, nameSeparator, enableSessionRebuild } = req.body;
+    const { routing, install, smartRouting, mcpRouter, nameSeparator, enableSessionRebuild, oauthServer } = req.body;
     const currentUser = (req as any).user;
 
+    const hasRoutingUpdate =
+      routing &&
+      (typeof routing.enableGlobalRoute === 'boolean' ||
+        typeof routing.enableGroupNameRoute === 'boolean' ||
+        typeof routing.enableBearerAuth === 'boolean' ||
+        typeof routing.bearerAuthKey === 'string' ||
+        typeof routing.skipAuth === 'boolean');
+
+    const hasInstallUpdate =
+      install &&
+      (typeof install.pythonIndexUrl === 'string' ||
+        typeof install.npmRegistry === 'string' ||
+        typeof install.baseUrl === 'string');
+
+    const hasSmartRoutingUpdate =
+      smartRouting &&
+      (typeof smartRouting.enabled === 'boolean' ||
+        typeof smartRouting.dbUrl === 'string' ||
+        typeof smartRouting.openaiApiBaseUrl === 'string' ||
+        typeof smartRouting.openaiApiKey === 'string' ||
+        typeof smartRouting.openaiApiEmbeddingModel === 'string');
+
+    const hasMcpRouterUpdate =
+      mcpRouter &&
+      (typeof mcpRouter.apiKey === 'string' ||
+        typeof mcpRouter.referer === 'string' ||
+        typeof mcpRouter.title === 'string' ||
+        typeof mcpRouter.baseUrl === 'string');
+
+    const hasNameSeparatorUpdate = typeof nameSeparator === 'string';
+    
+    const hasSessionRebuildUpdate = typeof enableSessionRebuild !== 'boolean';
+
+    const hasOAuthServerUpdate =
+      oauthServer &&
+      (typeof oauthServer.enabled === 'boolean' ||
+        typeof oauthServer.accessTokenLifetime === 'number' ||
+        typeof oauthServer.refreshTokenLifetime === 'number' ||
+        typeof oauthServer.authorizationCodeLifetime === 'number' ||
+        typeof oauthServer.requireClientSecret === 'boolean' ||
+        typeof oauthServer.requireState === 'boolean' ||
+        Array.isArray(oauthServer.allowedScopes) ||
+        (oauthServer.dynamicRegistration &&
+          (typeof oauthServer.dynamicRegistration.enabled === 'boolean' ||
+            typeof oauthServer.dynamicRegistration.requiresAuthentication === 'boolean' ||
+            Array.isArray(oauthServer.dynamicRegistration.allowedGrantTypes))));
+
     if (
-      (!routing ||
-        (typeof routing.enableGlobalRoute !== 'boolean' &&
-          typeof routing.enableGroupNameRoute !== 'boolean' &&
-          typeof routing.enableBearerAuth !== 'boolean' &&
-          typeof routing.bearerAuthKey !== 'string' &&
-          typeof routing.skipAuth !== 'boolean')) &&
-      (!install ||
-        (typeof install.pythonIndexUrl !== 'string' &&
-          typeof install.npmRegistry !== 'string' &&
-          typeof install.baseUrl !== 'string')) &&
-      (!smartRouting ||
-        (typeof smartRouting.enabled !== 'boolean' &&
-          typeof smartRouting.dbUrl !== 'string' &&
-          typeof smartRouting.openaiApiBaseUrl !== 'string' &&
-          typeof smartRouting.openaiApiKey !== 'string' &&
-          typeof smartRouting.openaiApiEmbeddingModel !== 'string')) &&
-      (!mcpRouter ||
-        (typeof mcpRouter.apiKey !== 'string' &&
-          typeof mcpRouter.referer !== 'string' &&
-          typeof mcpRouter.title !== 'string' &&
-          typeof mcpRouter.baseUrl !== 'string')) &&
-      typeof nameSeparator !== 'string' &&
-      typeof enableSessionRebuild !== 'boolean'
+      !hasRoutingUpdate &&
+      !hasInstallUpdate &&
+      !hasSmartRoutingUpdate &&
+      !hasMcpRouterUpdate &&
+      !hasNameSeparatorUpdate &&
+      !hasSessionRebuildUpdate &&
+      !hasOAuthServerUpdate
     ) {
       res.status(400).json({
         success: false,
@@ -571,6 +603,7 @@ export const updateSystemConfig = (req: Request, res: Response): void => {
           title: 'MCPHub',
           baseUrl: 'https://api.mcprouter.to/v1',
         },
+        oauthServer: cloneDefaultOAuthServerConfig(),
       };
     }
 
@@ -608,6 +641,28 @@ export const updateSystemConfig = (req: Request, res: Response): void => {
         referer: 'https://www.mcphubx.com',
         title: 'MCPHub',
         baseUrl: 'https://api.mcprouter.to/v1',
+      };
+    }
+
+    if (!settings.systemConfig.oauthServer) {
+      settings.systemConfig.oauthServer = cloneDefaultOAuthServerConfig();
+    }
+
+    if (!settings.systemConfig.oauthServer.dynamicRegistration) {
+      const defaultConfig = cloneDefaultOAuthServerConfig();
+      const defaultDynamic = defaultConfig.dynamicRegistration ?? {
+        enabled: false,
+        allowedGrantTypes: [],
+        requiresAuthentication: false,
+      };
+      settings.systemConfig.oauthServer.dynamicRegistration = {
+        enabled: defaultDynamic.enabled ?? false,
+        allowedGrantTypes: [
+          ...(Array.isArray(defaultDynamic.allowedGrantTypes)
+            ? defaultDynamic.allowedGrantTypes
+            : []),
+        ],
+        requiresAuthentication: defaultDynamic.requiresAuthentication ?? false,
       };
     }
 
@@ -713,6 +768,60 @@ export const updateSystemConfig = (req: Request, res: Response): void => {
       }
       if (typeof mcpRouter.baseUrl === 'string') {
         settings.systemConfig.mcpRouter.baseUrl = mcpRouter.baseUrl;
+      }
+    }
+
+    if (oauthServer) {
+      const target = settings.systemConfig.oauthServer;
+      if (typeof oauthServer.enabled === 'boolean') {
+        target.enabled = oauthServer.enabled;
+      }
+      if (typeof oauthServer.accessTokenLifetime === 'number') {
+        target.accessTokenLifetime = oauthServer.accessTokenLifetime;
+      }
+      if (typeof oauthServer.refreshTokenLifetime === 'number') {
+        target.refreshTokenLifetime = oauthServer.refreshTokenLifetime;
+      }
+      if (typeof oauthServer.authorizationCodeLifetime === 'number') {
+        target.authorizationCodeLifetime = oauthServer.authorizationCodeLifetime;
+      }
+      if (typeof oauthServer.requireClientSecret === 'boolean') {
+        target.requireClientSecret = oauthServer.requireClientSecret;
+      }
+      if (typeof oauthServer.requireState === 'boolean') {
+        target.requireState = oauthServer.requireState;
+      }
+      if (Array.isArray(oauthServer.allowedScopes)) {
+        target.allowedScopes = oauthServer.allowedScopes
+          .filter((scope: any): scope is string => typeof scope === 'string')
+          .map((scope: string) => scope.trim())
+          .filter((scope: string) => scope.length > 0);
+      }
+
+      if (oauthServer.dynamicRegistration) {
+        const dynamicTarget = target.dynamicRegistration || {
+          enabled: false,
+          allowedGrantTypes: ['authorization_code', 'refresh_token'],
+          requiresAuthentication: false,
+        };
+
+        if (typeof oauthServer.dynamicRegistration.enabled === 'boolean') {
+          dynamicTarget.enabled = oauthServer.dynamicRegistration.enabled;
+        }
+
+        if (Array.isArray(oauthServer.dynamicRegistration.allowedGrantTypes)) {
+          dynamicTarget.allowedGrantTypes = oauthServer.dynamicRegistration.allowedGrantTypes
+            .filter((grant: any): grant is string => typeof grant === 'string')
+            .map((grant: string) => grant.trim())
+            .filter((grant: string) => grant.length > 0);
+        }
+
+        if (typeof oauthServer.dynamicRegistration.requiresAuthentication === 'boolean') {
+          dynamicTarget.requiresAuthentication =
+            oauthServer.dynamicRegistration.requiresAuthentication;
+        }
+
+        target.dynamicRegistration = dynamicTarget;
       }
     }
 

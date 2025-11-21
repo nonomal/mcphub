@@ -3,6 +3,8 @@ import jwt from 'jsonwebtoken';
 import { loadSettings } from '../config/index.js';
 import defaultConfig from '../config/index.js';
 import { JWT_SECRET } from '../config/jwt.js';
+import { getToken } from '../models/OAuth.js';
+import { isOAuthServerEnabled } from '../services/oauthServerService.js';
 
 const validateBearerAuth = (req: Request, routingConfig: any): boolean => {
   if (!routingConfig.enableBearerAuth) {
@@ -34,7 +36,7 @@ const checkReadonly = (req: Request): boolean => {
 };
 
 // Middleware to authenticate JWT token
-export const auth = (req: Request, res: Response, next: NextFunction): void => {
+export const auth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   const t = (req as any).t;
   if (!checkReadonly(req)) {
     res.status(403).json({ success: false, message: t('api.errors.readonly') });
@@ -61,6 +63,28 @@ export const auth = (req: Request, res: Response, next: NextFunction): void => {
     return;
   }
 
+  // Check for OAuth access token in Authorization header
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ') && isOAuthServerEnabled()) {
+    const accessToken = authHeader.substring(7);
+    const oauthToken = getToken(accessToken);
+
+    if (oauthToken && oauthToken.accessToken === accessToken) {
+      // Valid OAuth token - look up user to get admin status
+      const { findUserByUsername } = await import('../models/User.js');
+      const user = findUserByUsername(oauthToken.username);
+      
+      // Set user context with proper admin status
+      (req as any).user = {
+        username: oauthToken.username,
+        isAdmin: user?.isAdmin || false,
+      };
+      (req as any).oauthToken = oauthToken;
+      next();
+      return;
+    }
+  }
+
   // Get token from header or query parameter
   const headerToken = req.header('x-auth-token');
   const queryToken = req.query.token as string;
@@ -72,7 +96,7 @@ export const auth = (req: Request, res: Response, next: NextFunction): void => {
     return;
   }
 
-  // Verify token
+  // Verify JWT token
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
 

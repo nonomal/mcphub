@@ -171,6 +171,7 @@ export interface SystemConfig {
   };
   nameSeparator?: string; // Separator used between server name and tool/prompt name (default: '-')
   oauth?: OAuthProviderConfig; // OAuth provider configuration for upstream MCP servers
+  oauthServer?: OAuthServerConfig; // OAuth authorization server configuration for MCPHub itself
   enableSessionRebuild?: boolean; // Controls whether server session rebuild is enabled
 }
 
@@ -183,6 +184,69 @@ export interface UserConfig {
   };
 }
 
+// OAuth Client for MCPHub's own authorization server
+export interface IOAuthClient {
+  clientId: string; // OAuth client ID
+  clientSecret?: string; // OAuth client secret (optional for public clients with PKCE)
+  name: string; // Human-readable client name
+  redirectUris: string[]; // Allowed redirect URIs
+  grants: string[]; // Allowed grant types (e.g., ['authorization_code', 'refresh_token'])
+  scopes?: string[]; // Allowed scopes for this client
+  owner?: string; // Owner of the OAuth client, defaults to 'admin' user
+  metadata?: {
+    // RFC 7591 Client Metadata
+    application_type?: 'web' | 'native'; // Application type
+    response_types?: string[]; // OAuth response types
+    token_endpoint_auth_method?: string; // Token endpoint authentication method
+    contacts?: string[]; // Array of contact emails
+    logo_uri?: string; // URL of the client logo
+    client_uri?: string; // URL of the client's homepage
+    policy_uri?: string; // URL of the client's policy document
+    tos_uri?: string; // URL of the client's terms of service
+    jwks_uri?: string; // URL of the client's JSON Web Key Set
+    jwks?: object; // Client's JSON Web Key Set
+  };
+}
+
+// OAuth Authorization Code (for MCPHub's authorization server)
+export interface IOAuthAuthorizationCode {
+  code: string; // Authorization code
+  expiresAt: Date; // Expiration time
+  redirectUri: string; // Redirect URI used in the authorization request
+  scope?: string; // Granted scopes
+  clientId: string; // Client ID
+  username: string; // User who authorized
+  codeChallenge?: string; // PKCE code challenge
+  codeChallengeMethod?: string; // PKCE code challenge method
+}
+
+// OAuth Token (for MCPHub's authorization server)
+export interface IOAuthToken {
+  accessToken: string; // Access token
+  accessTokenExpiresAt: Date; // Access token expiration
+  refreshToken?: string; // Refresh token (optional)
+  refreshTokenExpiresAt?: Date; // Refresh token expiration
+  scope?: string; // Granted scopes
+  clientId: string; // Client ID
+  username: string; // Username
+}
+
+// OAuth Server Configuration
+export interface OAuthServerConfig {
+  enabled?: boolean; // Enable/disable OAuth authorization server
+  accessTokenLifetime?: number; // Access token lifetime in seconds (default: 3600)
+  refreshTokenLifetime?: number; // Refresh token lifetime in seconds (default: 1209600 = 14 days)
+  authorizationCodeLifetime?: number; // Authorization code lifetime in seconds (default: 300 = 5 minutes)
+  requireClientSecret?: boolean; // Whether client secret is required (default: false for PKCE support)
+  allowedScopes?: string[]; // List of allowed OAuth scopes (default: ['read', 'write'])
+  requireState?: boolean; // Whether the state parameter is required during authorization (default: false)
+  dynamicRegistration?: {
+    enabled?: boolean; // Enable/disable RFC 7591 dynamic client registration
+    allowedGrantTypes?: string[]; // Allowed grant types for dynamic registration (default: ['authorization_code', 'refresh_token'])
+    requiresAuthentication?: boolean; // Whether initial registration requires authentication (default: false for public registration)
+  };
+}
+
 // Represents the settings for MCP servers
 export interface McpSettings {
   users?: IUser[]; // Array of user credentials and permissions
@@ -192,6 +256,8 @@ export interface McpSettings {
   groups?: IGroup[]; // Array of server groups
   systemConfig?: SystemConfig; // System-wide configuration settings
   userConfigs?: Record<string, UserConfig>; // User-specific configurations
+  oauthClients?: IOAuthClient[]; // OAuth clients for MCPHub's authorization server
+  oauthTokens?: IOAuthToken[]; // Persisted OAuth tokens (access + refresh) for authorization server
 }
 
 // Configuration details for an individual server
