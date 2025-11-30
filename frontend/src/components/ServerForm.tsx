@@ -95,6 +95,11 @@ const ServerForm = ({
         undefined,
     },
     oauth: getInitialOAuthConfig(initialData),
+    // KeepAlive configuration initialization
+    keepAlive: {
+      enabled: initialData?.config?.enableKeepAlive || false,
+      interval: initialData?.config?.keepAliveInterval || 60000,
+    },
     // OpenAPI configuration initialization
     openapi:
       initialData && initialData.config && initialData.config.openapi
@@ -151,6 +156,7 @@ const ServerForm = ({
 
   const [isRequestOptionsExpanded, setIsRequestOptionsExpanded] = useState<boolean>(false);
   const [isOAuthSectionExpanded, setIsOAuthSectionExpanded] = useState<boolean>(false);
+  const [isKeepAliveSectionExpanded, setIsKeepAliveSectionExpanded] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const isEdit = !!initialData;
 
@@ -377,6 +383,15 @@ const ServerForm = ({
                   env: Object.keys(env).length > 0 ? env : undefined,
                 }),
           ...(Object.keys(options).length > 0 ? { options } : {}),
+          // KeepAlive configuration (only for SSE/streamable-http types)
+          ...(serverType === 'sse' || serverType === 'streamable-http'
+            ? {
+                enableKeepAlive: formData.keepAlive?.enabled || false,
+                ...(formData.keepAlive?.enabled
+                  ? { keepAliveInterval: formData.keepAlive.interval || 60000 }
+                  : {}),
+              }
+            : {}),
         },
       };
 
@@ -1248,6 +1263,86 @@ const ServerForm = ({
                   </label>
                   <p className="text-xs text-gray-500 mt-1 ml-6">
                     {t('server.resetTimeoutOnProgressDescription')}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* KeepAlive Configuration - only for SSE/Streamable HTTP */}
+        {(serverType === 'sse' || serverType === 'streamable-http') && (
+          <div className="mb-4">
+            <div
+              className="flex items-center justify-between cursor-pointer bg-gray-50 hover:bg-gray-100 p-3 rounded border border-gray-200"
+              onClick={() => setIsKeepAliveSectionExpanded(!isKeepAliveSectionExpanded)}
+            >
+              <label className="text-gray-700 text-sm font-bold">
+                {t('server.keepAlive', 'Keep-Alive')}
+              </label>
+              <span className="text-gray-500 text-sm">
+                {isKeepAliveSectionExpanded ? '▼' : '▶'}
+              </span>
+            </div>
+
+            {isKeepAliveSectionExpanded && (
+              <div className="border border-gray-200 rounded-b p-4 bg-gray-50 border-t-0">
+                <div className="flex items-center mb-3">
+                  <input
+                    type="checkbox"
+                    id="enableKeepAlive"
+                    checked={formData.keepAlive?.enabled || false}
+                    onChange={(e) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        keepAlive: {
+                          ...prev.keepAlive,
+                          enabled: e.target.checked,
+                        },
+                      }))
+                    }
+                    className="mr-2"
+                  />
+                  <label htmlFor="enableKeepAlive" className="text-gray-600 text-sm">
+                    {t('server.enableKeepAlive', 'Enable Keep-Alive')}
+                  </label>
+                </div>
+                <p className="text-xs text-gray-500 mb-3">
+                  {t(
+                    'server.keepAliveDescription',
+                    'Send periodic ping requests to maintain the connection. Useful for long-running connections that may timeout.',
+                  )}
+                </p>
+                <div>
+                  <label
+                    className="block text-gray-600 text-sm font-medium mb-1"
+                    htmlFor="keepAliveInterval"
+                  >
+                    {t('server.keepAliveInterval', 'Interval (ms)')}
+                  </label>
+                  <input
+                    type="number"
+                    id="keepAliveInterval"
+                    value={formData.keepAlive?.interval || 60000}
+                    onChange={(e) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        keepAlive: {
+                          ...prev.keepAlive,
+                          interval: parseInt(e.target.value) || 60000,
+                        },
+                      }))
+                    }
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline form-input"
+                    placeholder="60000"
+                    min="5000"
+                    max="300000"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    {t(
+                      'server.keepAliveIntervalDescription',
+                      'Time between keep-alive pings in milliseconds (default: 60000ms = 1 minute)',
+                    )}
                   </p>
                 </div>
               </div>
