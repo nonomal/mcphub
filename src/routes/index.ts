@@ -6,6 +6,7 @@ import {
   getAllSettings,
   getServerConfig,
   createServer,
+  batchCreateServers,
   updateServer,
   deleteServer,
   toggleServer,
@@ -20,6 +21,7 @@ import {
   getGroups,
   getGroup,
   createNewGroup,
+  batchCreateGroups,
   updateExistingGroup,
   deleteExistingGroup,
   addServerToExistingGroup,
@@ -134,6 +136,7 @@ export const initRoutes = (app: express.Application): void => {
   router.get('/servers/:name', getServerConfig);
   router.get('/settings', getAllSettings);
   router.post('/servers', createServer);
+  router.post('/servers/batch', batchCreateServers);
   router.put('/servers/:name', updateServer);
   router.delete('/servers/:name', deleteServer);
   router.post('/servers/:name/toggle', toggleServer);
@@ -148,6 +151,7 @@ export const initRoutes = (app: express.Application): void => {
   router.get('/groups', getGroups);
   router.get('/groups/:id', getGroup);
   router.post('/groups', createNewGroup);
+  router.post('/groups/batch', batchCreateGroups);
   router.put('/groups/:id', updateExistingGroup);
   router.delete('/groups/:id', deleteExistingGroup);
   router.post('/groups/:id/servers', addServerToExistingGroup);

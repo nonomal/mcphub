@@ -2,70 +2,76 @@ import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { apiPost } from '@/utils/fetchInterceptor';
 
-interface JSONImportFormProps {
+interface GroupImportFormProps {
   onSuccess: () => void;
   onCancel: () => void;
 }
 
-interface McpServerConfig {
-  command?: string;
-  args?: string[];
-  env?: Record<string, string>;
-  type?: string;
-  url?: string;
-  headers?: Record<string, string>;
+interface ImportGroupConfig {
+  name: string;
+  description?: string;
+  servers?: string[] | Array<{ name: string; tools?: string[] | 'all' }>;
 }
 
 interface ImportJsonFormat {
-  mcpServers: Record<string, McpServerConfig>;
+  groups: ImportGroupConfig[];
 }
 
-const JSONImportForm: React.FC<JSONImportFormProps> = ({ onSuccess, onCancel }) => {
+const GroupImportForm: React.FC<GroupImportFormProps> = ({ onSuccess, onCancel }) => {
   const { t } = useTranslation();
   const [jsonInput, setJsonInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
-  const [previewServers, setPreviewServers] = useState<Array<{ name: string; config: any }> | null>(
-    null,
-  );
+  const [previewGroups, setPreviewGroups] = useState<ImportGroupConfig[] | null>(null);
 
   const examplePlaceholder = `{
-  "mcpServers": {
-    "stdio-server-example": {
-      "command": "npx",
-      "args": ["-y", "mcp-server-example"]
+  "groups": [
+    {
+      "name": "AI Assistants",
+      "servers": ["openai-server", "anthropic-server"]
     },
-    "sse-server-example": {
-      "type": "sse",
-      "url": "http://localhost:3000"
-    },
-    "http-server-example": {
-      "type": "streamable-http",
-      "url": "http://localhost:3001",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer your-token"
-      }
+    {
+      "name": "Development Tools",
+      "servers": [
+        {
+          "name": "github-server",
+          "tools": ["create_issue", "list_repos"]
+        },
+        {
+          "name": "gitlab-server",
+          "tools": "all"
+        }
+      ]
     }
-  }
+  ]
 }
 
-Supports: STDIO, SSE, HTTP (streamable-http), OpenAPI
-All servers will be imported in a single efficient batch operation.`;
+Supports:
+- Simple server list: ["server1", "server2"]
+- Advanced server config: [{"name": "server1", "tools": ["tool1", "tool2"]}]
+- All groups will be imported in a single efficient batch operation.`;
 
   const parseAndValidateJson = (input: string): ImportJsonFormat | null => {
     try {
       const parsed = JSON.parse(input.trim());
 
       // Validate structure
-      if (!parsed.mcpServers || typeof parsed.mcpServers !== 'object') {
-        setError(t('jsonImport.invalidFormat'));
+      if (!parsed.groups || !Array.isArray(parsed.groups)) {
+        setError(t('groupImport.invalidFormat'));
         return null;
+      }
+
+      // Validate each group
+      for (const group of parsed.groups) {
+        if (!group.name || typeof group.name !== 'string') {
+          setError(t('groupImport.missingName'));
+          return null;
+        }
       }
 
       return parsed as ImportJsonFormat;
     } catch (e) {
-      setError(t('jsonImport.parseError'));
+      setError(t('groupImport.parseError'));
       return null;
     }
   };
@@ -75,54 +81,31 @@ All servers will be imported in a single efficient batch operation.`;
     const parsed = parseAndValidateJson(jsonInput);
     if (!parsed) return;
 
-    const servers = Object.entries(parsed.mcpServers).map(([name, config]) => {
-      // Normalize config to MCPHub format
-      const normalizedConfig: any = {};
-
-      if (config.type === 'sse' || config.type === 'streamable-http') {
-        normalizedConfig.type = config.type;
-        normalizedConfig.url = config.url;
-        if (config.headers) {
-          normalizedConfig.headers = config.headers;
-        }
-      } else {
-        // Default to stdio
-        normalizedConfig.type = 'stdio';
-        normalizedConfig.command = config.command;
-        normalizedConfig.args = config.args || [];
-        if (config.env) {
-          normalizedConfig.env = config.env;
-        }
-      }
-
-      return { name, config: normalizedConfig };
-    });
-
-    setPreviewServers(servers);
+    setPreviewGroups(parsed.groups);
   };
 
   const handleImport = async () => {
-    if (!previewServers) return;
+    if (!previewGroups) return;
 
     setIsImporting(true);
     setError(null);
 
     try {
       // Use batch import API for better performance
-      const result = await apiPost('/servers/batch', {
-        servers: previewServers,
+      const result = await apiPost('/groups/batch', {
+        groups: previewGroups,
       });
 
-      if (result.success && result.data) {
-        const { successCount, failureCount, results } = result.data;
+      if (result.success) {
+        const { successCount, failureCount, results } = result;
 
         if (failureCount > 0) {
           const errors = results
             .filter((r: any) => !r.success)
-            .map((r: any) => `${r.name}: ${r.message || t('jsonImport.addFailed')}`);
+            .map((r: any) => `${r.name}: ${r.message || t('groupImport.addFailed')}`);
 
           setError(
-            t('jsonImport.partialSuccess', { count: successCount, total: previewServers.length }) +
+            t('groupImport.partialSuccess', { count: successCount, total: previewGroups.length }) +
               '\n' +
               errors.join('\n'),
           );
@@ -132,21 +115,55 @@ All servers will be imported in a single efficient batch operation.`;
           onSuccess();
         }
       } else {
-        setError(result.message || t('jsonImport.importFailed'));
+        setError(result.message || t('groupImport.importFailed'));
       }
     } catch (err) {
       console.error('Import error:', err);
-      setError(t('jsonImport.importFailed'));
+      setError(t('groupImport.importFailed'));
     } finally {
       setIsImporting(false);
     }
+  };
+
+  const renderServerList = (
+    servers?: string[] | Array<{ name: string; tools?: string[] | 'all' }>,
+  ) => {
+    if (!servers || servers.length === 0) {
+      return <span className="text-gray-500">{t('groups.noServers')}</span>;
+    }
+
+    return (
+      <div className="space-y-1">
+        {servers.map((server, idx) => {
+          if (typeof server === 'string') {
+            return (
+              <div key={idx} className="text-sm">
+                • {server}
+              </div>
+            );
+          } else {
+            return (
+              <div key={idx} className="text-sm">
+                • {server.name}
+                {server.tools && server.tools !== 'all' && (
+                  <span className="text-gray-500 ml-2">
+                    ({Array.isArray(server.tools) ? server.tools.join(', ') : server.tools})
+                  </span>
+                )}
+                {server.tools === 'all' && <span className="text-gray-500 ml-2">(all tools)</span>}
+              </div>
+            );
+          }
+        })}
+      </div>
+    );
   };
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white shadow rounded-lg p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center mb-6">
-          <h2 className="text-xl font-semibold text-gray-900">{t('jsonImport.title')}</h2>
+          <h2 className="text-xl font-semibold text-gray-900">{t('groupImport.title')}</h2>
           <button onClick={onCancel} className="text-gray-500 hover:text-gray-700">
             ✕
           </button>
@@ -158,11 +175,11 @@ All servers will be imported in a single efficient batch operation.`;
           </div>
         )}
 
-        {!previewServers ? (
+        {!previewGroups ? (
           <div>
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                {t('jsonImport.inputLabel')}
+                {t('groupImport.inputLabel')}
               </label>
               <textarea
                 value={jsonInput}
@@ -170,7 +187,7 @@ All servers will be imported in a single efficient batch operation.`;
                 className="w-full h-96 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
                 placeholder={examplePlaceholder}
               />
-              <p className="text-xs text-gray-500 mt-2">{t('jsonImport.inputHelp')}</p>
+              <p className="text-xs text-gray-500 mt-2">{t('groupImport.inputHelp')}</p>
             </div>
 
             <div className="flex justify-end space-x-4">
@@ -185,7 +202,7 @@ All servers will be imported in a single efficient batch operation.`;
                 disabled={!jsonInput.trim()}
                 className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 btn-primary"
               >
-                {t('jsonImport.preview')}
+                {t('groupImport.preview')}
               </button>
             </div>
           </div>
@@ -193,47 +210,20 @@ All servers will be imported in a single efficient batch operation.`;
           <div>
             <div className="mb-4">
               <h3 className="text-lg font-medium text-gray-900 mb-3">
-                {t('jsonImport.previewTitle')}
+                {t('groupImport.previewTitle')}
               </h3>
               <div className="space-y-3">
-                {previewServers.map((server, index) => (
+                {previewGroups.map((group, index) => (
                   <div key={index} className="bg-gray-50 p-4 rounded-lg border border-gray-200">
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
-                        <h4 className="font-medium text-gray-900">{server.name}</h4>
-                        <div className="mt-2 space-y-1 text-sm text-gray-600">
-                          <div>
-                            <strong>{t('server.type')}:</strong> {server.config.type || 'stdio'}
-                          </div>
-                          {server.config.command && (
-                            <div>
-                              <strong>{t('server.command')}:</strong> {server.config.command}
-                            </div>
-                          )}
-                          {server.config.args && server.config.args.length > 0 && (
-                            <div>
-                              <strong>{t('server.arguments')}:</strong>{' '}
-                              {server.config.args.join(' ')}
-                            </div>
-                          )}
-                          {server.config.url && (
-                            <div>
-                              <strong>{t('server.url')}:</strong> {server.config.url}
-                            </div>
-                          )}
-                          {server.config.env && Object.keys(server.config.env).length > 0 && (
-                            <div>
-                              <strong>{t('server.envVars')}:</strong>{' '}
-                              {Object.keys(server.config.env).join(', ')}
-                            </div>
-                          )}
-                          {server.config.headers &&
-                            Object.keys(server.config.headers).length > 0 && (
-                              <div>
-                                <strong>{t('server.headers')}:</strong>{' '}
-                                {Object.keys(server.config.headers).join(', ')}
-                              </div>
-                            )}
+                        <h4 className="font-medium text-gray-900">{group.name}</h4>
+                        {group.description && (
+                          <p className="text-sm text-gray-600 mt-1">{group.description}</p>
+                        )}
+                        <div className="mt-2 text-sm text-gray-600">
+                          <strong>{t('groups.servers')}:</strong>
+                          <div className="mt-1">{renderServerList(group.servers)}</div>
                         </div>
                       </div>
                     </div>
@@ -244,7 +234,7 @@ All servers will be imported in a single efficient batch operation.`;
 
             <div className="flex justify-end space-x-4">
               <button
-                onClick={() => setPreviewServers(null)}
+                onClick={() => setPreviewGroups(null)}
                 disabled={isImporting}
                 className="px-4 py-2 text-gray-700 bg-gray-200 rounded hover:bg-gray-300 disabled:opacity-50 btn-secondary"
               >
@@ -277,10 +267,10 @@ All servers will be imported in a single efficient batch operation.`;
                         d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                       ></path>
                     </svg>
-                    {t('jsonImport.importing')}
+                    {t('groupImport.importing')}
                   </>
                 ) : (
-                  t('jsonImport.import')
+                  t('groupImport.import')
                 )}
               </button>
             </div>
@@ -291,4 +281,4 @@ All servers will be imported in a single efficient batch operation.`;
   );
 };
 
-export default JSONImportForm;
+export default GroupImportForm;

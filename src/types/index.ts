@@ -420,3 +420,50 @@ export interface AddServerRequest {
   name: string; // Name of the server to add
   config: ServerConfig; // Configuration details for the server
 }
+
+// Request payload for batch creating servers
+export interface BatchCreateServersRequest {
+  servers: AddServerRequest[]; // Array of servers to create
+}
+
+// Result for a single server in batch operation
+export interface BatchServerResult {
+  name: string; // Server name
+  success: boolean; // Whether the operation succeeded
+  message?: string; // Error message if failed
+}
+
+// Response for batch create servers operation
+export interface BatchCreateServersResponse {
+  success: boolean; // Overall operation success (true if at least one server succeeded)
+  successCount: number; // Number of servers successfully created
+  failureCount: number; // Number of servers that failed
+  results: BatchServerResult[]; // Detailed results for each server
+}
+
+// Request payload for adding a new group
+export interface AddGroupRequest {
+  name: string; // Name of the group to add
+  description?: string; // Optional description of the group
+  servers?: string[] | IGroupServerConfig[]; // Array of server names or server configurations
+}
+
+// Request payload for batch creating groups
+export interface BatchCreateGroupsRequest {
+  groups: AddGroupRequest[]; // Array of groups to create
+}
+
+// Result for a single group in batch operation
+export interface BatchGroupResult {
+  name: string; // Group name
+  success: boolean; // Whether the operation succeeded
+  message?: string; // Error message if failed
+}
+
+// Response for batch create groups operation
+export interface BatchCreateGroupsResponse {
+  success: boolean; // Overall operation success (true if at least one group succeeded)
+  successCount: number; // Number of groups successfully created
+  failureCount: number; // Number of groups that failed
+  results: BatchGroupResult[]; // Detailed results for each group
+}
